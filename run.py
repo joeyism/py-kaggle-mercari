@@ -1,5 +1,8 @@
 from pyspark.sql import functions
 from pyspark.ml.feature import Word2Vec, StopWordsRemover
+from pyspark.sql.functions import monotonically_increasing_id
+from pyspark.sql.functions import udf
+import re
 import itertools
 
 
@@ -33,16 +36,37 @@ def getAnalogy(s, model):
             res.remove(s[k])
     return res[0]
 
+def clean_description(text):
+    text = text.lower().strip()
+    text = re.sub("[^0-9a-zA-Z ]", " ", text)
+    text = re.sub("[  ]", " ",text)
+    return text
 
+def group_by_words(dataframe):
+    return dataframe.rdd.map(lambda x: x[0]).flatMap(lambda x: x.split(" ")).map(lambda x: (x, 1)).reduceByKey(lambda a, b: a + b)
+
+clean_description_udf = udf(clean_description)
 
 df = df.fillna({"item_description": ""})
+df = df.fillna({"category_name": ""})
+df = df.withColumn("item_description", clean_description_udf("item_description"))
 df = df.withColumn("description_words", functions.split("item_description", " "))
+df = df.withColumn("id", monotonically_increasing_id())
 
-#TODO: Create function that cleans description
-def clean_description(text):
+category_dict = dict(df.select("category_name").distinct().rdd.map(lambda r: r[0]).zipWithIndex().collect())
+global_category_dict = sc.broadcast(category_dict)
+category_udf = udf(lambda x: global_category_dict.value[x])
+df = df.withColumn("category_id", category_udf("category_name"))
 
-
+# dict(group_by_words(df.select("category_name")).collect())
+# see most common words
+# group_by_words(df.select("item_description")).take(10)
 
 word2Vec = Word2Vec(vectorSize=3, minCount=0, inputCol="description_words", outputCol="word2vec_results")
 model = word2Vec.fit(df.select("description_words"))
 result = model.transform(df.select("description_words"))
+result = result.withColumn("id", monotonically_increasing_id())
+result = result.withColumn("word2vec_array", udf(lambda x: x.toArray())("word2vec_results"))
+
+df = df.join(result, df["id"] == result["id"], "inner")
+df = df.select(["item_condition_id", "price", "shipping", "word2vec_results"])
