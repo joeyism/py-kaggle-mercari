@@ -1,12 +1,24 @@
-from pyspark.sql import functions
+import pip
+
+def install(package):
+        pip.main(['install', package])
+
+install("pyspark")
+
+from pyspark.sql import functions, SQLContext
 from pyspark.ml.feature import Word2Vec, StopWordsRemover
 from pyspark.sql.types import FloatType
 from pyspark.sql.functions import monotonically_increasing_id, udf
 from pyspark.ml.regression import GBTRegressor
 from pyspark.ml.linalg import DenseVector
-
 import re
 import itertools
+from pyspark import SparkConf, SparkContext
+conf = (SparkConf()
+                 .setMaster("local")
+                 .setAppName("mercari")
+                 .set("spark.executor.memory", "5g"))
+sc = SparkContext(conf = conf)
 
 
 # Loading Data
@@ -103,4 +115,4 @@ input_test = spark.createDataFrame(test_data, ["test_id", "features"])
 gbt = GBTRegressor(maxIter=10)
 model = gbt.fit(input_df)
 prediction = model.transform(input_test)
-
+prediction.select(["test_id", "prediction"]).coalesce(1).write.format("com.databricks.spark.csv").save("submission")
